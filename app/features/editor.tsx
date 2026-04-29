@@ -27,6 +27,7 @@ export default function PresentationApp() {
   const [stageScale, setStageScale] = useState(1);
   const [stageOffset, setStageOffset] = useState({ x: 0, y: 0 });
   const [presenting, setPresenting] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const stageRef = useRef<Konva.Stage>(null);
   const transformerRef = useRef<Konva.Transformer>(null);
@@ -56,6 +57,8 @@ export default function PresentationApp() {
     return () => window.removeEventListener("resize", fit);
   }, []);
 
+  const [deleteBtnPos, setDeleteBtnPos] = useState<{ x: number; y: number } | null>(null);
+
   // Attach transformer to selected shape
   useEffect(() => {
     const tr = transformerRef.current;
@@ -71,6 +74,36 @@ export default function PresentationApp() {
     }
     tr.nodes([]);
   }, [selectedId, shapes]);
+
+  // Track bbox top-right corner of the selected shape (for the × delete badge)
+  useEffect(() => {
+    const stage = stageRef.current;
+    const tr = transformerRef.current;
+
+    const recompute = () => {
+      if (!selectedId || !stage) {
+        setDeleteBtnPos(null);
+        return;
+      }
+      const node = stage.findOne(`#${selectedId}`);
+      if (!node) {
+        setDeleteBtnPos(null);
+        return;
+      }
+      const rect = node.getClientRect();
+      setDeleteBtnPos({ x: rect.x + rect.width, y: rect.y });
+    };
+
+    recompute();
+
+    if (!selectedId || !stage) return;
+    stage.on("dragmove.deleteBadge", recompute);
+    tr?.on("transform.deleteBadge", recompute);
+    return () => {
+      stage.off("dragmove.deleteBadge");
+      tr?.off("transform.deleteBadge");
+    };
+  }, [selectedId, shapes, stageScale, stageOffset]);
 
   const updateShapes = useCallback(
     (updater: (arr: Shape[]) => Shape[]) => {
@@ -199,6 +232,32 @@ export default function PresentationApp() {
 
   const handleStageClick = (e: KonvaEventObject<MouseEvent | TouchEvent>) => {
     if (e.target === e.target.getStage()) setSelectedId(null);
+  };
+
+  const exportSchema = async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const payload = {
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        slides,
+      };
+      const totalShapes = slides.reduce((n, s) => n + s.shapes.length, 0);
+
+      console.groupCollapsed(
+        `%c[export] schema · ${slides.length} slide(s) · ${totalShapes} shape(s)`,
+        "color:#D2691E;font-weight:600",
+      );
+      console.log("payload (object):", payload);
+      console.log("payload (JSON):\n" + JSON.stringify(payload, null, 2));
+      console.groupEnd();
+    } catch (err) {
+      console.error("[export] failed", err);
+      alert(err instanceof Error ? err.message : "Export failed");
+    } finally {
+      setExporting(false);
+    }
   };
 
   return (
@@ -365,6 +424,28 @@ export default function PresentationApp() {
           <div style={{ flex: 1 }} />
 
           <button
+            onClick={exportSchema}
+            disabled={exporting}
+            style={{
+              padding: "8px 18px",
+              border: `1px solid ${COLORS.ink}`,
+              background: "#fff",
+              color: COLORS.ink,
+              cursor: exporting ? "wait" : "pointer",
+              borderRadius: 4,
+              fontSize: 12,
+              fontFamily: "Georgia, serif",
+              letterSpacing: 1,
+              textTransform: "uppercase",
+              fontWeight: 600,
+              opacity: exporting ? 0.6 : 1,
+            }}
+            title="Send slides schema to backend"
+          >
+            {exporting ? "Exporting…" : "↑ Export"}
+          </button>
+
+          <button
             onClick={() => {
               setSelectedId(null);
               setPresenting(true);
@@ -454,6 +535,48 @@ export default function PresentationApp() {
               onClose={() => setEditingTextId(null)}
               stageScale={stageScale}
             />
+          )}
+
+          {selectedId && deleteBtnPos && !editingTextId && !presenting && (
+            <button
+              onClick={() => deleteShape(selectedId)}
+              onMouseDown={(e) => e.stopPropagation()}
+              title="Delete shape"
+              style={{
+                position: "absolute",
+                left: stageOffset.x + deleteBtnPos.x - 11,
+                top: stageOffset.y + deleteBtnPos.y - 11,
+                width: 22,
+                height: 22,
+                borderRadius: "50%",
+                border: `1px solid ${COLORS.border}`,
+                background: "#fff",
+                color: "#A85751",
+                cursor: "pointer",
+                fontSize: 14,
+                fontWeight: 700,
+                lineHeight: 1,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: 0,
+                boxShadow: `0 2px 6px ${COLORS.shadow}`,
+                zIndex: 10,
+                fontFamily: "Georgia, serif",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "#A85751";
+                e.currentTarget.style.color = "#fff";
+                e.currentTarget.style.borderColor = "#A85751";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "#fff";
+                e.currentTarget.style.color = "#A85751";
+                e.currentTarget.style.borderColor = COLORS.border;
+              }}
+            >
+              ×
+            </button>
           )}
 
           {shapes.length === 0 && (
